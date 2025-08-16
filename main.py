@@ -1,7 +1,9 @@
 import os
 import sys
 from dotenv import load_dotenv
+import asyncio
 from telethon import TelegramClient, events
+from telethon.errors import FloodWaitError
 
 # --- 1. MEMUAT KONFIGURASI ---
 print("Memuat konfigurasi dari file .env...")
@@ -57,26 +59,32 @@ client = TelegramClient(
 )
 
 # --- 5. LOGIKA UTAMA BOT ---
+# --- 5. LOGIKA UTAMA BOT ---
 @client.on(events.NewMessage(chats=SOURCE_CHANNEL))
 async def handle_new_message(event):
-    """Handler untuk pesan baru di channel sumber."""
+    """Handler untuk pesan baru di channel sumber, dengan logika retry."""
     message = event.message
 
     # Sesuai permintaan: hanya proses pesan yang memiliki media.
-    # Abaikan pesan teks murni.
     if message.media:
-        print(f"Media terdeteksi di pesan ID {message.id}, menyalin ke tujuan...")
-        try:
-            # Kirim media beserta captionnya ke channel tujuan
-            await client.send_message(
-                entity=DESTINATION_CHANNEL,
-                message=message.text, # event.message.text adalah caption
-                file=message.media
-            )
-            print(f"Pesan ID {message.id} berhasil disalin.")
-        except Exception as e:
-            # Penanganan error sederhana untuk proses penyalinan
-            print(f"Gagal menyalin pesan ID {message.id}. Error: {e}")
+        print(f"Media terdeteksi di pesan ID {message.id}, mencoba menyalin...")
+
+        # Loop untuk mencoba kembali jika terjadi FloodWaitError
+        while True:
+            try:
+                await client.send_message(
+                    entity=DESTINATION_CHANNEL,
+                    message=message.text,  # Ini adalah caption
+                    file=message.media
+                )
+                print(f"Pesan ID {message.id} berhasil disalin.")
+                break  # Keluar dari loop jika berhasil
+            except FloodWaitError as e:
+                print(f"Terkena FloodWaitError. Menunggu selama {e.seconds} detik...")
+                await asyncio.sleep(e.seconds)
+            except Exception as e:
+                print(f"Gagal menyalin pesan ID {message.id} karena error lain: {e}")
+                break  # Hentikan percobaan untuk pesan ini jika error lain terjadi
 
 async def main():
     """Fungsi utama untuk menjalankan bot, dengan penanganan error."""
@@ -88,21 +96,28 @@ async def main():
     except Exception as e:
         print(f"Terjadi error kritis yang tidak terduga: {e}")
         print("Mencoba mengirim notifikasi error sebelum berhenti...")
-        try:
-            # Pastikan client terhubung untuk bisa mengirim pesan notifikasi
-            if not client.is_connected():
-                await client.connect()
 
-            # Kirim pesan notifikasi error
-            await client.send_message(
-                entity=NOTIFICATION_CHAT_ID,
-                message=f"**PEMBERITAHUAN: BOT BERHENTI**\n\n"
-                        f"Bot pemantau channel berhenti karena mengalami error kritis.\n\n"
-                        f"**Detail Error:**\n`{type(e).__name__}: {e}`"
-            )
-            print("Notifikasi error berhasil dikirim.")
-        except Exception as notif_e:
-            print(f"Gagal mengirim notifikasi error. Error notifikasi: {notif_e}")
+        # Loop untuk mencoba kembali mengirim notifikasi jika terjadi FloodWaitError
+        while True:
+            try:
+                # Pastikan client terhubung untuk bisa mengirim pesan notifikasi
+                if not client.is_connected():
+                    await client.connect()
+
+                await client.send_message(
+                    entity=NOTIFICATION_CHAT_ID,
+                    message=f"**PEMBERITAHUAN: BOT BERHENTI**\n\n"
+                            f"Bot pemantau channel berhenti karena mengalami error kritis.\n\n"
+                            f"**Detail Error:**\n`{type(e).__name__}: {e}`"
+                )
+                print("Notifikasi error berhasil dikirim.")
+                break  # Keluar dari loop jika berhasil
+            except FloodWaitError as fe:
+                print(f"Gagal mengirim notifikasi karena FloodWaitError. Menunggu {fe.seconds} detik...")
+                await asyncio.sleep(fe.seconds)
+            except Exception as notif_e:
+                print(f"Gagal total mengirim notifikasi error. Error notifikasi: {notif_e}")
+                break  # Gagal karena error lain, keluar dari loop
     finally:
         if client.is_connected():
             await client.disconnect()
