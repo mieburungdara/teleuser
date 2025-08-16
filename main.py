@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import asyncio
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError
+from telethon.tl import types
 
 # --- 1. MEMUAT KONFIGURASI ---
 print("Memuat konfigurasi dari file .env...")
@@ -59,21 +60,75 @@ client = TelegramClient(
 )
 
 # --- 5. LOGIKA UTAMA BOT ---
+def format_caption(message, chat, sender):
+    """Membangun caption baru yang informatif."""
+    original_caption = message.text or ""
+
+    # Info Sumber
+    source_name = chat.title
+    if chat.username:
+        source_link = f"https://t.me/{chat.username}"
+        source_info = f"[{source_name}]({source_link})"
+    else:
+        source_info = source_name
+
+    # Info Pengirim
+    sender_info = "N/A"
+    if sender:
+        if isinstance(sender, types.User):
+            sender_name = sender.first_name
+            if sender.last_name:
+                sender_name += f" {sender.last_name}"
+            # Buat deep link ke profil pengguna
+            sender_info = f"[{sender_name}](tg://user?id={sender.id})"
+        elif isinstance(sender, types.Channel):
+            sender_info = sender.title
+
+    # Info Waktu (dalam UTC)
+    timestamp = message.date.strftime("%d %b %Y, %H:%M:%S UTC")
+
+    # Link Pesan Asli
+    if chat.username:
+        message_link = f"https://t.me/{chat.username}/{message.id}"
+    else:
+        # Untuk chat privat, ID perlu sedikit diubah
+        chat_id_str = str(message.chat_id).replace("-100", "", 1)
+        message_link = f"https://t.me/c/{chat_id_str}/{message.id}"
+
+    # Gabungkan semua informasi
+    additional_info = (
+        f"\n\n― ― ― ― ― ― ― ― ― ―\n"
+        f"**Sumber:** {source_info}\n"
+        f"**Pengirim:** {sender_info}\n"
+        f"**Waktu:** {timestamp}\n"
+        f"**Tautan Asli:** [Klik di sini]({message_link})"
+    )
+
+    return original_caption + additional_info
+
 # --- 5. LOGIKA UTAMA BOT ---
 @client.on(events.Album(chats=SOURCE_CHANNEL))
 async def handle_album(event):
     """Handler untuk album media, dengan logika retry."""
     album_messages = event.messages
-    caption = album_messages[0].text if album_messages[0].text else ""
+    # Ambil chat dan sender dari event
+    chat = event.chat
+    sender = event.sender
+    # Gunakan pesan pertama sebagai referensi untuk caption
+    reference_message = album_messages[0]
 
-    print(f"Album terdeteksi dengan Group ID {album_messages[0].grouped_id}, berisi {len(album_messages)} media. Mencoba menyalin...")
+    # Buat caption baru yang informatif
+    new_caption = format_caption(reference_message, chat, sender)
+
+    print(f"Album terdeteksi dengan Group ID {reference_message.grouped_id}, berisi {len(album_messages)} media. Mencoba menyalin...")
 
     while True:
         try:
             await client.send_file(
                 entity=DESTINATION_CHANNEL,
                 file=[msg.media for msg in album_messages],
-                caption=caption
+                caption=new_caption,
+                parse_mode='md'  # Penting: untuk merender Markdown di caption
             )
             print(f"Album dengan Group ID {album_messages[0].grouped_id} berhasil disalin.")
             break
@@ -97,13 +152,20 @@ async def handle_new_message(event):
     if message.media:
         print(f"Media terdeteksi di pesan ID {message.id}, mencoba menyalin...")
 
+        # Dapatkan info chat dan sender
+        chat = event.chat
+        sender = event.sender
+        # Buat caption baru
+        new_caption = format_caption(message, chat, sender)
+
         # Loop untuk mencoba kembali jika terjadi FloodWaitError
         while True:
             try:
                 await client.send_message(
                     entity=DESTINATION_CHANNEL,
-                    message=message.text,  # Ini adalah caption
-                    file=message.media
+                    message=new_caption,
+                    file=message.media,
+                    parse_mode='md'
                 )
                 print(f"Pesan ID {message.id} berhasil disalin.")
                 break  # Keluar dari loop jika berhasil
