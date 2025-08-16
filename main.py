@@ -16,10 +16,7 @@ load_dotenv()
 # Ambil nilai dari environment variables
 API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
-SESSION_STRING = os.getenv('SESSION_STRING')
-# Variabel-variabel ini sekarang diatur secara interaktif
-# SOURCE_STR = os.getenv('SOURCE_CHANNEL')
-# HISTORY_START_ID_STR = os.getenv('HISTORY_START_ID')
+SESSION_NAME = os.getenv('SESSION_NAME')
 DEST_STR = os.getenv('DESTINATION_CHANNEL')
 NOTIF_STR = os.getenv('NOTIFICATION_CHAT_ID')
 
@@ -28,8 +25,7 @@ NOTIF_STR = os.getenv('NOTIFICATION_CHAT_ID')
 required_vars = {
     "API_ID": API_ID,
     "API_HASH": API_HASH,
-    "SESSION_STRING": SESSION_STRING,
-    # "SOURCE_CHANNEL": SOURCE_STR, # Dihapus dari validasi
+    "SESSION_NAME": SESSION_NAME,
     "DESTINATION_CHANNEL": DEST_STR,
     "NOTIFICATION_CHAT_ID": NOTIF_STR
 }
@@ -62,10 +58,8 @@ NOTIFICATION_CHAT_ID = parse_entity(NOTIF_STR)
 print("Konfigurasi berhasil dimuat.")
 
 # --- 4. INISIALISASI KLIEN TELETHON ---
-from telethon.sessions import StringSession
-
 client = TelegramClient(
-    StringSession(SESSION_STRING),
+    SESSION_NAME,
     int(API_ID),
     API_HASH
 )
