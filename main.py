@@ -251,6 +251,12 @@ async def main():
     async with client:
         print("Bot berhasil terhubung.")
 
+        # Memuat dialog untuk "memanaskan" cache entitas dan mencegah error
+        print("Memuat dialog untuk caching entitas...")
+        async for _ in client.iter_dialogs():
+            pass
+        print("Dialogs berhasil di-cache.")
+
         # 1. Mulai percakapan interaktif dengan admin
         source_channel_id = None
         start_message_id = None
