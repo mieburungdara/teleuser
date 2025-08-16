@@ -60,10 +60,38 @@ client = TelegramClient(
 
 # --- 5. LOGIKA UTAMA BOT ---
 # --- 5. LOGIKA UTAMA BOT ---
+@client.on(events.Album(chats=SOURCE_CHANNEL))
+async def handle_album(event):
+    """Handler untuk album media, dengan logika retry."""
+    album_messages = event.messages
+    caption = album_messages[0].text if album_messages[0].text else ""
+
+    print(f"Album terdeteksi dengan Group ID {album_messages[0].grouped_id}, berisi {len(album_messages)} media. Mencoba menyalin...")
+
+    while True:
+        try:
+            await client.send_file(
+                entity=DESTINATION_CHANNEL,
+                file=[msg.media for msg in album_messages],
+                caption=caption
+            )
+            print(f"Album dengan Group ID {album_messages[0].grouped_id} berhasil disalin.")
+            break
+        except FloodWaitError as e:
+            print(f"Terkena FloodWaitError saat menyalin album. Menunggu selama {e.seconds} detik...")
+            await asyncio.sleep(e.seconds)
+        except Exception as e:
+            print(f"Gagal menyalin album karena error lain: {e}")
+            break
+
 @client.on(events.NewMessage(chats=SOURCE_CHANNEL))
 async def handle_new_message(event):
-    """Handler untuk pesan baru di channel sumber, dengan logika retry."""
+    """Handler untuk pesan media tunggal, dengan logika retry."""
     message = event.message
+
+    # Jika pesan adalah bagian dari album, abaikan. Sudah ditangani oleh handle_album.
+    if message.grouped_id:
+        return
 
     # Sesuai permintaan: hanya proses pesan yang memiliki media.
     if message.media:
