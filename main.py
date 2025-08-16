@@ -4,7 +4,10 @@ from dotenv import load_dotenv
 import asyncio
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError
+import re
 from telethon.tl import types
+from telethon.errors.rpcerrorlist import UserIsBlockedError
+from asyncio.exceptions import TimeoutError
 
 # --- 1. MEMUAT KONFIGURASI ---
 print("Memuat konfigurasi dari file .env...")
@@ -14,10 +17,11 @@ load_dotenv()
 API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
 SESSION_STRING = os.getenv('SESSION_STRING')
-SOURCE_STR = os.getenv('SOURCE_CHANNEL')
+# Variabel-variabel ini sekarang diatur secara interaktif
+# SOURCE_STR = os.getenv('SOURCE_CHANNEL')
+# HISTORY_START_ID_STR = os.getenv('HISTORY_START_ID')
 DEST_STR = os.getenv('DESTINATION_CHANNEL')
 NOTIF_STR = os.getenv('NOTIFICATION_CHAT_ID')
-HISTORY_START_ID_STR = os.getenv('HISTORY_START_ID')
 
 # --- 2. VALIDASI KONFIGURASI ---
 # Pastikan variabel penting tidak kosong
@@ -25,7 +29,7 @@ required_vars = {
     "API_ID": API_ID,
     "API_HASH": API_HASH,
     "SESSION_STRING": SESSION_STRING,
-    "SOURCE_CHANNEL": SOURCE_STR,
+    # "SOURCE_CHANNEL": SOURCE_STR, # Dihapus dari validasi
     "DESTINATION_CHANNEL": DEST_STR,
     "NOTIFICATION_CHAT_ID": NOTIF_STR
 }
@@ -45,15 +49,15 @@ def parse_entity(entity_str):
     except (ValueError, TypeError):
         return entity_str
 
-SOURCE_CHANNEL = parse_entity(SOURCE_STR)
+# SOURCE_CHANNEL = parse_entity(SOURCE_STR) # Logika lama
 DESTINATION_CHANNEL = parse_entity(DEST_STR)
 NOTIFICATION_CHAT_ID = parse_entity(NOTIF_STR)
 
-# Konversi HISTORY_START_ID jika ada
-HISTORY_START_ID = None
-if HISTORY_START_ID_STR and HISTORY_START_ID_STR.isdigit():
-    HISTORY_START_ID = int(HISTORY_START_ID_STR)
-    print(f"Mode Riwayat diaktifkan, mulai dari ID: {HISTORY_START_ID}")
+# HISTORY_START_ID sekarang didapat secara interaktif
+# HISTORY_START_ID = None
+# if HISTORY_START_ID_STR and HISTORY_START_ID_STR.isdigit():
+#     HISTORY_START_ID = int(HISTORY_START_ID_STR)
+#     print(f"Mode Riwayat diaktifkan, mulai dari ID: {HISTORY_START_ID}")
 
 print("Konfigurasi berhasil dimuat.")
 
@@ -159,13 +163,11 @@ async def process_album(messages, chat, sender, client):
             break
 
 # --- 6. EVENT HANDLER REAL-TIME ---
-@client.on(events.Album(chats=SOURCE_CHANNEL))
 async def handle_album(event):
     """Handler untuk album media. Meneruskan event ke fungsi proses."""
     print(f"Event Album terdeteksi (Group ID: {event.grouped_id})")
     await process_album(event.messages, event.chat, event.sender, client)
 
-@client.on(events.NewMessage(chats=SOURCE_CHANNEL))
 async def handle_new_message(event):
     """Handler untuk pesan media tunggal. Meneruskan event ke fungsi proses."""
     message = event.message
@@ -202,16 +204,11 @@ async def run_scrape_pass(min_id, client, entity, processed_group_ids):
             await process_single_message(message, entity, sender, client)
     return last_id
 
-async def scrape_history(client):
-    """Menyalin riwayat pesan jika dikonfigurasi."""
-    if not HISTORY_START_ID:
-        print("Mode Riwayat tidak diaktifkan, melanjutkan ke mode real-time.")
-        return
-
+async def scrape_history(client, source_entity, start_id):
+    """Menyalin riwayat pesan dari ID awal yang diberikan."""
     print("--- MEMULAI MODE RIWAYAT ---")
     try:
-        entity = await client.get_entity(SOURCE_CHANNEL)
-        last_known_id = HISTORY_START_ID - 1
+        last_known_id = start_id - 1
         processed_group_ids = set()
 
         while True:
@@ -245,53 +242,79 @@ async def scrape_history(client):
     print("--- MODE RIWAYAT SELESAI ---")
 
 
-# --- 8. FUNGSI UTAMA ---
+# --- 8. FUNGSI UTAMA & ALUR KERJA ---
 async def main():
-    """Fungsi utama untuk menjalankan bot, dengan penanganan error."""
-    try:
-        await client.start()
+    """Fungsi utama yang menjalankan seluruh alur kerja bot secara interaktif."""
+
+    print("Menjalankan bot...")
+    # Menghubungkan client di dalam blok with untuk memastikan diskoneksi yang aman
+    async with client:
         print("Bot berhasil terhubung.")
 
-        # Jalankan mode riwayat terlebih dahulu
-        await scrape_history(client)
-
-        print(f"\n--- MEMULAI MODE REAL-TIME ---")
-        print(f"Memantau pesan baru di channel/grup: {SOURCE_CHANNEL}")
-        await client.run_until_disconnected()
-    except Exception as e:
-        print(f"Terjadi error kritis yang tidak terduga: {e}")
-        print("Mencoba mengirim notifikasi error sebelum berhenti...")
-
-        # Loop untuk mencoba kembali mengirim notifikasi jika terjadi FloodWaitError
-        while True:
-            try:
-                # Pastikan client terhubung untuk bisa mengirim pesan notifikasi
-                if not client.is_connected():
-                    await client.connect()
-
-                await client.send_message(
-                    entity=NOTIFICATION_CHAT_ID,
-                    message=f"**PEMBERITAHUAN: BOT BERHENTI**\n\n"
-                            f"Bot pemantau channel berhenti karena mengalami error kritis.\n\n"
-                            f"**Detail Error:**\n`{type(e).__name__}: {e}`"
+        # 1. Mulai percakapan interaktif dengan admin
+        source_channel_id = None
+        start_message_id = None
+        try:
+            admin_entity = await client.get_entity(NOTIFICATION_CHAT_ID)
+            print(f"Mengirim permintaan ke admin ({admin_entity.id}) untuk instruksi...")
+            async with client.conversation(admin_entity, timeout=300) as conv:
+                await conv.send_message(
+                    "Bot siap. Silakan kirim link dari pesan awal yang ingin disalin.\n"
+                    "Contoh: `https://t.me/c/1234567890/500`"
                 )
-                print("Notifikasi error berhasil dikirim.")
-                break  # Keluar dari loop jika berhasil
-            except FloodWaitError as fe:
-                print(f"Gagal mengirim notifikasi karena FloodWaitError. Menunggu {fe.seconds} detik...")
-                await asyncio.sleep(fe.seconds)
-            except Exception as notif_e:
-                print(f"Gagal total mengirim notifikasi error. Error notifikasi: {notif_e}")
-                break  # Gagal karena error lain, keluar dari loop
-    finally:
-        if client.is_connected():
-            await client.disconnect()
-        print("Koneksi bot telah ditutup. Program berhenti.")
-        # sys.exit(0) akan menghentikan program
+
+                response = await conv.get_response()
+
+                # 2. Parsing link dari admin
+                link_pattern = re.compile(r"t\.me/c/(\d+)/(\d+)")
+                match = link_pattern.search(response.text)
+
+                if not match:
+                    await conv.send_message("Format link tidak valid. Harap berikan link yang benar. Bot berhenti.")
+                    return
+
+                channel_id_str, start_message_id_str = match.groups()
+                source_channel_id = int("-100" + channel_id_str)
+                start_message_id = int(start_message_id_str)
+
+                await conv.send_message(
+                    f"Instruksi diterima. Menyalin dari Channel ID: `{source_channel_id}` "
+                    f"mulai dari Pesan ID: `{start_message_id}`."
+                )
+
+        except TimeoutError:
+            print("Waktu habis menunggu input dari admin. Bot berhenti.")
+            return
+        except UserIsBlockedError:
+            print("Bot diblokir oleh admin, tidak bisa mengirim permintaan. Bot berhenti.")
+            return
+        except Exception as e:
+            print(f"Terjadi error tak terduga saat setup interaktif: {e}. Bot berhenti.")
+            return
+
+        # 3. Pendaftaran handler dinamis
+        print(f"Mendaftarkan event handler untuk channel: {source_channel_id}")
+        client.add_event_handler(handle_album, events.Album(chats=source_channel_id))
+        client.add_event_handler(handle_new_message, events.NewMessage(chats=source_channel_id))
+
+        # 4. Jalankan mode riwayat
+        try:
+            source_entity = await client.get_entity(source_channel_id)
+            await scrape_history(client, source_entity, start_message_id)
+        except Exception as e:
+            print(f"Gagal total saat menjalankan mode riwayat: {e}")
+
+        # 5. Jalankan mode real-time
+        print(f"\n--- MEMULAI MODE REAL-TIME ---")
+        print(f"Memantau pesan baru di channel/grup: {source_channel_id}")
+        print("Bot sekarang berjalan dalam mode real-time. Tekan Ctrl+C untuk berhenti.")
+        await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    print("Menjalankan bot...")
-    # Menggunakan loop dari client untuk menjalankan fungsi main
-    with client:
-        client.loop.run_until_complete(main())
-    print("Program selesai.")
+    # Menjalankan loop event asyncio untuk fungsi main
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot dihentikan oleh pengguna.")
+    finally:
+        print("Program selesai.")
