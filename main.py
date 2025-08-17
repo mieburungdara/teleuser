@@ -207,7 +207,7 @@ async def scrape_history(client, source_entity, start_id):
 
         while True:
             print(f"\nMemulai pass pengejaran dari ID: {last_known_id + 1}")
-            latest_messages = await client.get_messages(entity, limit=1)
+            latest_messages = await client.get_messages(source_entity, limit=1)
             if not latest_messages:
                 print("Channel tampak kosong. Mengakhiri mode riwayat.")
                 break
@@ -218,13 +218,13 @@ async def scrape_history(client, source_entity, start_id):
                 break
 
             print(f"Menyalin pesan dari ID {last_known_id + 1} hingga {current_latest_id}...")
-            last_known_id = await run_scrape_pass(last_known_id, client, entity, processed_group_ids)
+            last_known_id = await run_scrape_pass(last_known_id, client, source_entity, processed_group_ids)
 
         print("\nSinkronisasi awal selesai. Menunggu 5 detik untuk 'settling'...")
         await asyncio.sleep(5)
 
         print("Melakukan satu pemeriksaan terakhir...")
-        final_pass_last_id = await run_scrape_pass(last_known_id, client, entity, processed_group_ids)
+        final_pass_last_id = await run_scrape_pass(last_known_id, client, source_entity, processed_group_ids)
         if final_pass_last_id > last_known_id:
             print("Sisa pesan berhasil disalin.")
         else:
